@@ -6,6 +6,7 @@ import com.example.demo.observer.NotificationService;
 import com.example.demo.observer.ReaderObserver;
 import com.example.demo.service.LibraryService;
 import com.example.demo.service.ReaderService;
+import com.example.demo.util.Librarian;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -28,6 +29,16 @@ public class ReaderController {
 
     @PostMapping
     public ResponseEntity<String> addReader(@RequestBody Reader reader) {
+
+
+        if( reader.getEmail() == null || reader.getEmail().isEmpty() ) {
+            return ResponseEntity.badRequest().body("Email is required");
+        }
+
+        if(readerService.existsByEmail(reader.getEmail())) {
+            return ResponseEntity.badRequest().body("Email already exists");
+        }
+
         readerService.addReader(reader);
 
         ReaderObserver observer = new ReaderObserver(reader);
@@ -51,25 +62,71 @@ public class ReaderController {
         }
     }
 
-    @PostMapping("/{id}/{rent}")
-    public ResponseEntity<String> rentReader(@PathVariable String id, @PathVariable String rent) {
+    @PostMapping("/{id}/{isbn}")
+    public ResponseEntity<String> rentReader(@PathVariable String id, @PathVariable String isbn) {
         Reader reader = readerService.getReaderById(id);
-        Book book = libraryService.getBookByIsbn(rent);
+        Book book = libraryService.getBookByIsbn(isbn);
 
         if (reader == null || book == null) {
             return ResponseEntity.badRequest().body("Reader or Book not found");
         }
 
+        if (reader.getRentedBook().containsKey(book.getIsbn())) {
+            return ResponseEntity.badRequest().body("This book is already rented by this reader.");
+        }
+
+        if (reader.getRentedBook().size() >= 5) {
+            return ResponseEntity.badRequest().body("Reader can't rent more than 5 books.");
+        }
+
         if (!book.isAvailable()) {
-            return ResponseEntity.badRequest().body("Book rented successfully!");
+            ReaderObserver observer = new ReaderObserver(reader);
+            book.addToWaitlist(observer);
+            Librarian.getInstance().logAction("Reader [" + reader.getId() + "] added to waitlist for book [" + book.getTitle() + "]");
+            return ResponseEntity.ok("Book is not available. You've been added to the waitlist.");
         }
 
-        if (reader.getRentedBook().size() > 5 ) {
-            return ResponseEntity.badRequest().body("Book is already rented!");
-        }
         reader.getRentedBook().put(book.getIsbn(), LocalDate.now());
-        book.setAvailable(false);
+        book.setCount(book.getCount() - 1);
 
-        return ResponseEntity.ok("Book is rented!");
+        Librarian.getInstance().logAction("Reader [" + reader.getId() + "] rented book [" + book.getTitle() + "]");
+
+        return ResponseEntity.ok("Book is rented successfully!");
+    }
+
+
+    @PostMapping("/return/{id}/{isbn}")
+    public ResponseEntity<String> returnReader(@PathVariable String id, @PathVariable String isbn) {
+        Reader reader = readerService.getReaderById(id);
+        Book book = libraryService.getBookByIsbn(isbn);
+
+        if (reader == null || book == null) {
+            return ResponseEntity.badRequest().body("Reader or Book not found.");
+        }
+
+        if (!reader.getRentedBook().containsKey(isbn)) {
+            return ResponseEntity.badRequest().body("This book is not rented by the reader.");
+        }
+
+        LocalDate rentedDate = reader.getRentedBook().get(isbn);
+        LocalDate dueDate = rentedDate.plusDays(7);
+        LocalDate today = LocalDate.now();
+
+        reader.getRentedBook().remove(isbn);
+        book.setCount(book.getCount() + 1);
+
+        if (today.isAfter(dueDate)) {
+            Librarian.getInstance().logAction("Reader [" + reader.getId() + "] returned overdue book [" + book.getTitle() + "]");
+            return ResponseEntity.ok("Book returned, but it was overdue!");
+        }
+
+        Librarian.getInstance().logAction("Reader [" + reader.getId() + "] returned book [" + book.getTitle() + "]");
+
+        if (!book.getWaitlist().isEmpty()) {
+            ReaderObserver next = book.pollWaitlist();
+            next.update("Book '" + book.getTitle() + "' is now available!");
+        }
+
+        return ResponseEntity.ok("Book returned successfully!");
     }
 }

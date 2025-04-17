@@ -1,8 +1,10 @@
 package com.example.demo.service;
 
+import com.example.demo.factory.BookFactory;
 import com.example.demo.model.Book;
 import com.example.demo.model.Reader;
 import com.example.demo.observer.NotificationService;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -48,5 +50,11 @@ public class LibraryService {
         return bookMap.values().stream()
                 .filter(book -> book.getAuthor().toLowerCase().contains(author.toLowerCase()))
                 .collect(Collectors.toList());
+    }
+
+    @PostConstruct
+    public void init() {
+        Book book = BookFactory.createBook("9780132350884", "Clean Code", "Robert C. Martin");
+        addBook(book);
     }
 }
